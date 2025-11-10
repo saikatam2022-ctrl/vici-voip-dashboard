@@ -1,2 +1,5 @@
 .vs/ 
 *.vsidx 
+.env 
+.env.local 
+.env.production 
