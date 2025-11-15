@@ -10,13 +10,22 @@
   },
   "dependencies": {
     "axios": "^1.13.2",
+    "chart.js": "^4.5.1",
+    "dayjs": "^1.11.19",
     "preact": "^10.27.2",
-    "recharts": "^3.3.0"
+    "react-chartjs-2": "^5.3.1",
+    "react-router-dom": "^7.9.6",
+    "recharts": "^3.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.2",
     "@tailwindcss/postcss": "^4.1.16",
-    "@types/node": "^24.6.0",
+    "@types/chart.js": "^2.9.41",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-router-dom": "^5.3.3",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.16",

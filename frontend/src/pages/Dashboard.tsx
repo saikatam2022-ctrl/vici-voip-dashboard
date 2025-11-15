@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from "react";
-import axios from "axios";
+import { Link } from "react-router-dom";
 import {
     LineChart,
     Line,
@@ -8,70 +8,137 @@ import {
     YAxis,
     Tooltip,
     ResponsiveContainer,
-    Legend,
+    BarChart,
+    Bar,
 } from "recharts";
+import apiClient from "../api/axiosConfig";
 
-// Format date as YYYY-MM-DD
+// -----------------------------
+// Types & Helpers
+// -----------------------------
+type ASRTimeframe = "hour" | "day" | "week" | "month";
+type ConnectedCallsTimeframe = "15min" | "30min" | "1hour";
+type MainTimeframe = "live" | "yesterday" | "weekly" | "monthly" | "custom";
+
+interface ChartDataPoint {
+    time: string;
+    connected_calls: number;
+}
+
 const formatDate = (date: Date) => date.toISOString().split("T")[0];
 
+const money = (n: number | undefined | null) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+        Number(n || 0)
+    );
+
+const neonGlow = "shadow-[0_10px_30px_rgba(99,102,241,0.12)]";
+
+// -----------------------------
+// Component
+// -----------------------------
 const Dashboard: React.FC = () => {
+    // data + status
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const [timeframe, setTimeframe] = useState<
-        "daily" | "yesterday" | "weekly" | "monthly" | "custom"
-    >("daily");
-    const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
-    const [customStart, setCustomStart] = useState<string>("");
-    const [customEnd, setCustomEnd] = useState<string>("");
-    const [serverDate, setServerDate] = useState<string | null>(null);
+    const [serverDate, setServerDate] = useState<string>("");
     const [balance, setBalance] = useState<number>(0);
 
-    // ✅ Fetch Vicidial server's current date
-    const fetchServerDate = async () => {
+    // timeframe controls
+    const [timeframe, setTimeframe] = useState<MainTimeframe>("live");
+    const [customStart, setCustomStart] = useState<string>("");
+    const [customEnd, setCustomEnd] = useState<string>("");
+
+    // refresh / charts
+    const [refreshKey, setRefreshKey] = useState<number>(0);
+    const [asrTimeframe, setAsrTimeframe] = useState<ASRTimeframe>("day");
+    const [connectedCallsTimeframe, setConnectedCallsTimeframe] =
+        useState<ConnectedCallsTimeframe>("30min");
+
+    // chart data
+    const [asrChartData, setAsrChartData] = useState<ChartDataPoint[]>([]);
+    const [connectedCallsData, setConnectedCallsData] = useState<ChartDataPoint[]>(
+        []
+    );
+    const [chartLoading, setChartLoading] = useState<boolean>(false);
+
+    // -----------------------------
+    // API Calls
+    // -----------------------------
+    const fetchServerDate = async (): Promise<string> => {
         try {
-            const res = await axios.get("http://localhost:8000/server-date");
-            setServerDate(res.data.server_date);
-            return res.data.server_date;
-        } catch (err) {
-            console.error("Error fetching server date:", err);
-            // Fallback to local date
-            return formatDate(new Date());
+            const res = await apiClient.get("/server-date");
+            const sd = res.data.server_date;
+            setServerDate(sd);
+            return sd;
+        } catch (e) {
+            console.error("fetchServerDate:", e);
+            const fallback = formatDate(new Date());
+            setServerDate(fallback);
+            return fallback;
         }
     };
 
-    // ✅ Fetch balance separately
     const fetchBalance = async () => {
         try {
-            const res = await axios.get("http://localhost:8000/balance");
-            setBalance(res.data.current_balance);
-        } catch (err) {
-            console.error("Error fetching balance:", err);
+            const res = await apiClient.get("/balance");
+            setBalance(Number(res.data.current_balance || 0));
+        } catch (e) {
+            console.error("fetchBalance:", e);
         }
     };
 
-    // Calculate date range based on timeframe
+    const fetchASRChart = async () => {
+        try {
+            setChartLoading(true);
+            const res = await apiClient.get("/chart/asr", {
+                params: { timeframe: asrTimeframe, campaign: "0006" },
+            });
+            if (res.data && res.data.success) {
+                setAsrChartData(res.data.data || []);
+            }
+        } catch (e) {
+            console.error("fetchASRChart:", e);
+        } finally {
+            setChartLoading(false);
+        }
+    };
+
+    const fetchConnectedCallsChart = async () => {
+        try {
+            setChartLoading(true);
+            const res = await apiClient.get("/chart/connected-calls-live", {
+                params: { timeframe: connectedCallsTimeframe, campaign: "0006" },
+            });
+            if (res.data && res.data.success) {
+                setConnectedCallsData(res.data.data || []);
+            }
+        } catch (e) {
+            console.error("fetchConnectedCallsChart:", e);
+        } finally {
+            setChartLoading(false);
+        }
+    };
+
     const getDateRange = async () => {
         const today = serverDate || (await fetchServerDate());
-        let startDate: string;
-        let endDate: string = today;
+        let startDate = today;
+        let endDate = today;
 
-        if (timeframe === "daily") {
-            startDate = endDate;
-        } else if (timeframe === "yesterday") {
+        if (timeframe === "yesterday") {
             const y = new Date(today);
             y.setDate(y.getDate() - 1);
-            startDate = formatDate(y);
-            endDate = formatDate(y);
+            startDate = endDate = formatDate(y);
         } else if (timeframe === "weekly") {
-            const past = new Date(today);
-            past.setDate(past.getDate() - 7);
-            startDate = formatDate(past);
+            const w = new Date(today);
+            w.setDate(w.getDate() - 7);
+            startDate = formatDate(w);
         } else if (timeframe === "monthly") {
-            const past = new Date(today);
-            past.setDate(past.getDate() - 30);
-            startDate = formatDate(past);
-        } else {
+            const m = new Date(today);
+            m.setDate(m.getDate() - 30);
+            startDate = formatDate(m);
+        } else if (timeframe === "custom") {
             startDate = customStart || today;
             endDate = customEnd || today;
         }
@@ -79,371 +146,433 @@ const Dashboard: React.FC = () => {
         return { startDate, endDate };
     };
 
-    // Fetch report data
     const fetchReport = async (silent = false) => {
-        if (timeframe === "custom" && (!customStart || !customEnd)) return;
-
         try {
             if (!silent) setLoading(true);
-
             const { startDate, endDate } = await getDateRange();
-
-            const res = await axios.get("http://localhost:8000/report", {
-                params: {
-                    campaign: "0006",
-                    start_date: startDate,
-                    end_date: endDate,
-                },
+            const res = await apiClient.get("/report", {
+                params: { campaign: "0006", start_date: startDate, end_date: endDate },
             });
-            setData(res.data);
-            setError(null);
 
-            // Update balance from response
-            if (res.data.balance !== undefined) {
-                setBalance(res.data.balance);
+            setData(res.data);
+            if (res.data && res.data.balance !== undefined) {
+                setBalance(Number(res.data.balance || 0));
             }
-        } catch (err: any) {
-            console.error("Error fetching data:", err);
-            setError(err.response?.data?.error || "Failed to fetch data from backend.");
+            setError(null);
+        } catch (e: any) {
+            console.error("fetchReport:", e);
+            setError(e?.response?.data?.error || "Failed to fetch report");
         } finally {
             if (!silent) setLoading(false);
         }
     };
 
-    // Initial load - fetch server date and balance
+    // -----------------------------
+    // Lifecycle
+    // -----------------------------
     useEffect(() => {
-        const initialize = async () => {
+        const init = async () => {
             await fetchServerDate();
             await fetchBalance();
             await fetchReport(true);
+            await fetchASRChart();
+            await fetchConnectedCallsChart();
         };
-        initialize();
+        init();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Auto-refresh every 60s
+    // live auto-refresh every 60s when in live mode
     useEffect(() => {
-        const interval = setInterval(() => {
-            fetchBalance(); // Refresh balance
-            setRefreshTrigger((p) => p + 1);
+        if (timeframe !== "live") return;
+        const id = setInterval(() => {
+            fetchReport(true);
+            fetchBalance();
+            fetchConnectedCallsChart();
         }, 60000);
-        return () => clearInterval(interval);
-    }, []);
+        return () => clearInterval(id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timeframe, connectedCallsTimeframe]);
 
-    // Fetch when timeframe or refresh changes
+    // refresh when timeframe or refreshKey changes
     useEffect(() => {
         fetchReport(true);
-    }, [timeframe, refreshTrigger]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timeframe, refreshKey]);
 
-    // Call stats
+    useEffect(() => {
+        fetchASRChart();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [asrTimeframe]);
+
+    useEffect(() => {
+        fetchConnectedCallsChart();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [connectedCallsTimeframe]);
+
+    // -----------------------------
+    // Derived stats
+    // -----------------------------
     const dispositions = data?.dispositions || {};
-    const zeroCalls = dispositions?.NA || 0;
+    const zeroCalls = dispositions.NA || 0;
     const nonZeroCalls = Object.entries(dispositions)
-        .filter(([key]) => key !== "NA")
-        .reduce((sum, [, value]: any) => sum + value, 0);
+        .filter(([k]) => k !== "NA")
+        .reduce((s, [, v]: any) => s + v, 0);
+    const total = data?.total_calls || 0;
 
-    // ✅ Calculate CPS (Calls Per Second)
-    const calculateCPS = () => {
-        if (!data || !data.total_calls) return 0;
-
-        const totalCalls = data.total_calls;
-        let totalSeconds = 0;
-
-        if (timeframe === "daily" || timeframe === "yesterday") {
-            totalSeconds = 24 * 60 * 60; // 1 day = 86400 seconds
-        } else if (timeframe === "weekly") {
-            totalSeconds = 7 * 24 * 60 * 60;
-        } else if (timeframe === "monthly") {
-            totalSeconds = 30 * 24 * 60 * 60;
-        } else {
-            // Custom range - calculate days
-            if (customStart && customEnd) {
-                const start = new Date(customStart);
-                const end = new Date(customEnd);
-                const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-                totalSeconds = days * 24 * 60 * 60;
-            } else {
-                totalSeconds = 24 * 60 * 60;
-            }
-        }
-
-        return (totalCalls / totalSeconds).toFixed(4);
+    // -----------------------------
+    // Actions
+    // -----------------------------
+    const handleLogout = () => {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        window.location.href = "/login";
     };
 
-    const cps = calculateCPS();
-
-    // ✅ Chart data for ASR & ACD (Updated like CPS)
-    const generateChartData = () => {
-        if (!data) return [];
-        const numPoints =
-            timeframe === "daily" || timeframe === "yesterday"
-                ? 24 // Hourly for daily view
-                : timeframe === "weekly"
-                    ? 7
-                    : timeframe === "monthly"
-                        ? 30
-                        : 10;
-
-        const baseASR = data.ASR_percent || 0;
-        const baseACD = data.ACD_seconds || 0;
-
-        return Array.from({ length: numPoints }).map((_, i) => ({
-            name:
-                timeframe === "daily" || timeframe === "yesterday"
-                    ? `${i}:00` // Hour format (0:00, 1:00, etc.)
-                    : timeframe === "weekly"
-                        ? `Day ${i + 1}`
-                        : timeframe === "monthly"
-                            ? `Day ${i + 1}`
-                            : `Point ${i + 1}`,
-            ASR: Math.max(0, Math.min(100, baseASR + (Math.random() - 0.5) * 10)), // Keep ASR between 0-100
-            ACD: Math.max(0, baseACD + (Math.random() - 0.5) * baseACD * 0.3), // More variation
-        }));
+    const manualRefresh = async () => {
+        await Promise.all([fetchReport(), fetchASRChart(), fetchConnectedCallsChart(), fetchBalance()]);
+        setRefreshKey((k) => k + 1);
     };
 
-    // ✅ Chart data for CPS
-    const generateCPSChartData = () => {
-        if (!data) return [];
-        const numPoints =
-            timeframe === "daily" || timeframe === "yesterday"
-                ? 24 // Hourly for daily view
-                : timeframe === "weekly"
-                    ? 7
-                    : timeframe === "monthly"
-                        ? 30
-                        : 10;
-
-        const baseCPS = parseFloat(cps);
-
-        return Array.from({ length: numPoints }).map((_, i) => ({
-            name:
-                timeframe === "daily" || timeframe === "yesterday"
-                    ? `${i}:00`
-                    : `Point ${i + 1}`,
-            CPS: Math.max(0, baseCPS + (Math.random() - 0.5) * baseCPS * 0.3),
-        }));
-    };
-
-    const chartData = generateChartData();
-    const cpsChartData = generateCPSChartData();
-
+    // -----------------------------
+    // UI
+    // -----------------------------
     return (
-        <div className="min-h-screen bg-gray-100 text-gray-800 p-8 space-y-8">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-blue-800">
-                        Vicidial ASR & Cost Dashboard
-                    </h1>
-                    {serverDate && (
-                        <p className="text-sm text-gray-600 mt-1">
-                            🕐 Server Date: {serverDate}
-                        </p>
-                    )}
-                </div>
-                <div className="flex items-center gap-4">
-                    <div className="bg-green-100 px-4 py-2 rounded-lg border border-green-400">
-                        <p className="text-green-700 font-semibold text-lg">
-                            💰 Balance: ${balance.toFixed(2)}
-                        </p>
+        <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_left,_#0f172a,_#0b1221)] text-gray-100 p-6">
+            <div className="max-w-[1400px] mx-auto space-y-6">
+                {/* Header */}
+                <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                        <div
+                            className={`p-3 rounded-3xl bg-white/6 backdrop-blur-sm border border-white/6 ${neonGlow}`}
+                            style={{ boxShadow: "0 8px 40px rgba(99,102,241,0.08)" }}
+                        >
+                            <svg
+                                className="w-8 h-8 text-white/90"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2"
+                                    strokeWidth="1.6"
+                                />
+                                <circle cx="12" cy="12" r="9" strokeWidth="1.2" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-semibold leading-tight">
+                                Vicidial <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-cyan-200">Analytics</span>
+                            </h1>
+                            <p className="text-sm text-white/60 mt-1">Realtime insights · Frosted interface · Neon accents</p>
+                            {serverDate && (
+                                <div className="mt-2 text-xs text-white/50 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.3)]"></span>
+                                    Server date: {serverDate}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    <button
-                        onClick={() => {
-                            fetchBalance();
-                            fetchReport();
-                        }}
-                        className="bg-blue-600 text-white px-5 py-2 rounded-lg shadow hover:bg-blue-700 transition"
-                    >
-                        🔄 Refresh
-                    </button>
-                </div>
-            </div>
 
-            {/* Timeframe Selector */}
-            <div className="flex flex-wrap gap-3 mb-6">
-                {["daily", "yesterday", "weekly", "monthly", "custom"].map((frame) => (
-                    <button
-                        key={frame}
-                        onClick={() => setTimeframe(frame as any)}
-                        className={`px-4 py-2 rounded-lg font-medium ${timeframe === frame
-                            ? "bg-blue-600 text-white"
-                            : "bg-white text-gray-700 border hover:bg-gray-50"
-                            }`}
-                    >
-                        {frame === "daily"
-                            ? "Today"
-                            : frame === "yesterday"
-                                ? "Yesterday"
-                                : frame === "weekly"
-                                    ? "Last 7 Days"
-                                    : frame === "monthly"
-                                        ? "Last 30 Days"
-                                        : "Custom Range"}
-                    </button>
-                ))}
-            </div>
-
-            {/* Custom Date Range Picker */}
-            {timeframe === "custom" && (
-                <div className="flex flex-col md:flex-row gap-4 mb-6 bg-white p-4 rounded-lg shadow">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-600 mb-1">
-                            Start Date
-                        </label>
-                        <input
-                            type="date"
-                            value={customStart}
-                            onChange={(e) => setCustomStart(e.target.value)}
-                            className="border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-600 mb-1">
-                            End Date
-                        </label>
-                        <input
-                            type="date"
-                            value={customEnd}
-                            onChange={(e) => setCustomEnd(e.target.value)}
-                            className="border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-                    <button
-                        onClick={() => fetchReport()}
-                        disabled={!customStart || !customEnd}
-                        className={`self-end px-4 py-2 rounded-lg shadow ${customStart && customEnd
-                            ? "bg-green-600 text-white hover:bg-green-700"
-                            : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                            } transition`}
-                    >
-                        Apply Range
-                    </button>
-                </div>
-            )}
-
-            {/* Main Section */}
-            {error ? (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-                    <p className="font-semibold">Error:</p>
-                    <p>{error}</p>
-                </div>
-            ) : loading ? (
-                <div className="text-gray-500 text-lg">Fetching data...</div>
-            ) : (
-                data && (
-                    <>
-                        {/* Summary Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-                            <div className="bg-white p-6 rounded-2xl shadow hover:shadow-md transition">
-                                <h3 className="text-gray-600 mb-1">Total Calls</h3>
-                                <p className="text-2xl font-bold text-gray-900">
-                                    {data.total_calls || 0}
-                                </p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl shadow hover:shadow-md transition">
-                                <h3 className="text-gray-600 mb-1">Connected Calls</h3>
-                                <p className="text-2xl font-bold text-blue-700">
-                                    {data.connected_calls || 0}
-                                </p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl shadow hover:shadow-md transition">
-                                <h3 className="text-gray-600 mb-1">ASR</h3>
-                                <p className="text-2xl font-bold text-green-700">
-                                    {data.ASR_percent || 0}%
-                                </p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl shadow hover:shadow-md transition">
-                                <h3 className="text-gray-600 mb-1">ACD</h3>
-                                <p className="text-2xl font-bold text-indigo-600">
-                                    {data.ACD_seconds || 0}s
-                                </p>
-                            </div>
-                            {/* ✅ New CPS Card */}
-                            <div className="bg-white p-6 rounded-2xl shadow hover:shadow-md transition">
-                                <h3 className="text-gray-600 mb-1">CPS</h3>
-                                <p className="text-2xl font-bold text-purple-600">
-                                    {cps}
-                                </p>
-                                <p className="text-xs text-gray-500 mt-1">calls/sec</p>
-                            </div>
+                    <div className="flex items-center gap-3">
+                        <div className="rounded-xl px-4 py-2 bg-white/6 backdrop-blur-sm border border-white/6 flex items-center gap-3">
+                            <div className="text-sm text-white/80">Balance</div>
+                            <div className="text-lg font-semibold text-white">{money(balance)}</div>
                         </div>
 
-                        {/* Cost & Zero/Non-Zero Calls */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-                            <div className="bg-white p-6 rounded-2xl shadow">
-                                <h3 className="text-gray-600 mb-1">Total Cost</h3>
-                                <p className="text-3xl font-bold text-red-600">
-                                    ${data.billing?.total_cost_inr?.toFixed(2) || "0.00"}
-                                </p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl shadow">
-                                <h3 className="text-gray-600 mb-1">Non-Zero / Zero Calls</h3>
-                                <p className="text-xl font-semibold">
-                                    📞 Non-Zero:{" "}
-                                    <span className="text-blue-700">{nonZeroCalls}</span> |
-                                    ⛔ Zero:{" "}
-                                    <span className="text-red-600">{zeroCalls}</span>
-                                </p>
+                        <button
+                            onClick={manualRefresh}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-400 to-cyan-400 text-white font-medium shadow-lg hover:scale-[1.02] transition-transform"
+                        >
+                            Refresh
+                        </button>
+
+                        <button
+                            onClick={handleLogout}
+                            className="px-4 py-2 rounded-xl bg-white/6 border border-white/8 text-white/80 hover:bg-white/8 transition"
+                        >
+                            Logout
+                        </button>
+                    </div>
+                </header>
+
+                {/* Timeframe + Quick Actions */}
+                <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="col-span-2 rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-4 flex flex-wrap items-center gap-3">
+                        {[
+                            { key: "live", label: "Today (Live)" },
+                            { key: "yesterday", label: "Yesterday" },
+                            { key: "weekly", label: "Last 7 Days" },
+                            { key: "monthly", label: "Last 30 Days" },
+                            { key: "custom", label: "Custom Range" },
+                        ].map((t) => (
+                            <button
+                                key={t.key}
+                                onClick={() => setTimeframe(t.key as MainTimeframe)}
+                                className={`px-3 py-2 rounded-lg text-sm font-medium transition ${timeframe === (t.key as MainTimeframe)
+                                        ? "bg-gradient-to-r from-cyan-500 to-indigo-500 text-black shadow-md"
+                                        : "bg-white/5 text-white/80 hover:bg-white/8"
+                                    }`}
+                            >
+                                {t.label}
+                            </button>
+                        ))}
+
+                        <Link
+                            to="/payment-history"
+                            className="ml-auto px-3 py-2 rounded-lg bg-white/6 hover:bg-white/8 text-white/80"
+                        >
+                            Payment History
+                        </Link>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-4 flex flex-col gap-3">
+                        {timeframe === "custom" ? (
+                            <>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="date"
+                                        value={customStart}
+                                        onChange={(e) => setCustomStart(e.target.value)}
+                                        className="px-3 py-2 rounded-lg bg-white/3 border border-white/6 text-white/90"
+                                    />
+                                    <input
+                                        type="date"
+                                        value={customEnd}
+                                        onChange={(e) => setCustomEnd(e.target.value)}
+                                        className="px-3 py-2 rounded-lg bg-white/3 border border-white/6 text-white/90"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => fetchReport()}
+                                        disabled={!customStart || !customEnd}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium transition ${customStart && customEnd
+                                                ? "bg-gradient-to-r from-indigo-500 to-cyan-400 text-black"
+                                                : "bg-white/5 text-white/50 cursor-not-allowed"
+                                            }`}
+                                    >
+                                        Apply
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setCustomStart("");
+                                            setCustomEnd("");
+                                        }}
+                                        className="px-3 py-2 rounded-lg bg-white/5 text-white/80"
+                                    >
+                                        Reset
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="text-sm text-white/70">Select timeframe to view report</div>
+                        )}
+                    </div>
+                </section>
+
+                {/* Summary Cards */}
+                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Card builder */}
+                    {[
+                        {
+                            title: "Total Calls",
+                            value: data?.total_calls?.toLocaleString() || "0",
+                            accent: "from-indigo-400 to-cyan-300",
+                        },
+                        {
+                            title: "Connected Calls",
+                            value: data?.connected_calls?.toLocaleString() || "0",
+                            accent: "from-blue-400 to-sky-300",
+                        },
+                        {
+                            title: "ASR",
+                            value: `${Number(data?.ASR_percent || 0).toFixed(2)}%`,
+                            accent: "from-emerald-300 to-green-400",
+                        },
+                        {
+                            title: "ACD",
+                            value: `${Number(data?.ACD_seconds || 0).toFixed(2)}s`,
+                            accent: "from-purple-300 to-violet-400",
+                        },
+                    ].map((c, i) => (
+                        <div
+                            key={i}
+                            className="rounded-2xl p-4 bg-white/3 backdrop-blur-sm border border-white/6"
+                            style={{
+                                boxShadow: "0 8px 30px rgba(2,6,23,0.45)",
+                                overflow: "hidden",
+                            }}
+                        >
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs text-white/70">{c.title}</p>
+                                    <h3 className="text-2xl font-semibold mt-1 text-white">{c.value}</h3>
+                                </div>
+                                <div
+                                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${c.accent} flex items-center justify-center text-black font-bold`}
+                                    style={{
+                                        transform: "translateZ(0)",
+                                        boxShadow: "0 8px 24px rgba(99,102,241,0.12)",
+                                    }}
+                                >
+                                    {/* small neon icon */}
+                                    <svg className="w-6 h-6 opacity-90" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <path d="M3 12h18" strokeWidth="1.4"></path>
+                                        <path d="M12 3v18" strokeWidth="1.4"></path>
+                                    </svg>
+                                </div>
                             </div>
                         </div>
+                    ))}
+                </section>
 
-                        {/* ✅ Charts Side by Side */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {/* ASR & ACD Chart */}
-                            <div className="bg-white p-6 rounded-2xl shadow">
-                                <h3 className="text-xl font-semibold mb-4">
-                                    ASR & ACD Trends
-                                </h3>
-                                <ResponsiveContainer width="100%" height={320}>
-                                    <LineChart data={chartData}>
-                                        <CartesianGrid stroke="#e5e7eb" strokeDasharray="4 4" />
-                                        <XAxis dataKey="name" />
-                                        <YAxis />
-                                        <Tooltip />
-                                        <Legend />
+                {/* Cost & Distribution */}
+                <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-6">
+                        <h4 className="text-sm text-white/70">Total Cost</h4>
+                        <div className="flex items-center gap-4 mt-4">
+                            <div className="text-3xl font-bold text-white">{money(data?.billing?.total_cost_inr)}</div>
+                            <div className="text-sm text-white/60">Billed for selected date range</div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-6">
+                        <h4 className="text-sm text-white/70">Call Distribution</h4>
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <div className="flex justify-between text-xs text-white/80">
+                                    <span>Non-Zero Calls</span>
+                                    <span className="font-medium">{nonZeroCalls.toLocaleString()}</span>
+                                </div>
+                                <div className="w-full bg-white/6 rounded-full h-2 mt-2 overflow-hidden">
+                                    <div
+                                        className="h-2 rounded-full"
+                                        style={{
+                                            width: `${((nonZeroCalls / Math.max(total, 1)) * 100).toFixed(1)}%`,
+                                            background: "linear-gradient(90deg,#06b6d4,#7c3aed)",
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="flex justify-between text-xs text-white/80">
+                                    <span>Zero Calls</span>
+                                    <span className="font-medium">{zeroCalls.toLocaleString()}</span>
+                                </div>
+                                <div className="w-full bg-white/6 rounded-full h-2 mt-2 overflow-hidden">
+                                    <div
+                                        className="h-2 rounded-full"
+                                        style={{
+                                            width: `${((zeroCalls / Math.max(total, 1)) * 100).toFixed(1)}%`,
+                                            background: "linear-gradient(90deg,#94a3b8,#475569)",
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Charts */}
+                <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* ASR Chart */}
+                    <div className="rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h5 className="text-lg font-semibold text-white">ASR Trend (%)</h5>
+                            <select
+                                value={asrTimeframe}
+                                onChange={(e) => setAsrTimeframe(e.target.value as ASRTimeframe)}
+                                className="px-3 py-2 rounded-lg bg-white/6 text-white"
+                            >
+                                <option value="hour">Last Hour</option>
+                                <option value="day">Last 24 Hours</option>
+                                <option value="week">Last Week</option>
+                                <option value="month">Last Month</option>
+                            </select>
+                        </div>
+
+                        <div style={{ height: 320 }}>
+                            {chartLoading ? (
+                                <div className="h-full flex items-center justify-center text-white/60">Loading chart...</div>
+                            ) : asrChartData.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart
+                                        data={asrChartData.map((item) => ({
+                                            time: item.time,
+                                            asr: Number(((item.connected_calls / (item.connected_calls + 600)) * 100).toFixed(2)),
+                                        }))}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#0b1221" />
+                                        <XAxis dataKey="time" tick={{ fill: "#cbd5e1" }} />
+                                        <YAxis domain={[0, 100]} tick={{ fill: "#cbd5e1" }} />
+                                        <Tooltip formatter={(v: any) => `${v}%`} />
                                         <Line
                                             type="monotone"
-                                            dataKey="ASR"
-                                            stroke="#2563eb"
+                                            dataKey="asr"
+                                            stroke="url(#asrGradient)"
                                             strokeWidth={3}
-                                            name="ASR (%)"
+                                            dot={false}
+                                            isAnimationActive={true}
                                         />
-                                        <Line
-                                            type="monotone"
-                                            dataKey="ACD"
-                                            stroke="#10b981"
-                                            strokeWidth={3}
-                                            name="ACD (sec)"
-                                        />
+                                        <defs>
+                                            <linearGradient id="asrGradient" x1="0" x2="1" y1="0" y2="0">
+                                                <stop offset="0%" stopColor="#06b6d4" stopOpacity={1} />
+                                                <stop offset="100%" stopColor="#7c3aed" stopOpacity={1} />
+                                            </linearGradient>
+                                        </defs>
                                     </LineChart>
                                 </ResponsiveContainer>
-                            </div>
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-white/60">
+                                    No data — requires historical stats table.
+                                </div>
+                            )}
+                        </div>
+                    </div>
 
-                            {/* ✅ CPS Chart */}
-                            <div className="bg-white p-6 rounded-2xl shadow">
-                                <h3 className="text-xl font-semibold mb-4">
-                                    CPS (Calls Per Second)
-                                </h3>
-                                <ResponsiveContainer width="100%" height={320}>
-                                    <LineChart data={cpsChartData}>
-                                        <CartesianGrid stroke="#e5e7eb" strokeDasharray="4 4" />
-                                        <XAxis dataKey="name" />
-                                        <YAxis />
-                                        <Tooltip />
-                                        <Legend />
-                                        <Line
-                                            type="monotone"
-                                            dataKey="CPS"
-                                            stroke="#9333ea"
-                                            strokeWidth={3}
-                                            name="CPS"
-                                        />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                    {/* Connected Calls Live */}
+                    <div className="rounded-2xl bg-white/4 backdrop-blur-sm border border-white/6 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h5 className="text-lg font-semibold text-white">Connected Calls (Live)</h5>
+                            <div className="flex gap-2">
+                                {(["15min", "30min", "1hour"] as ConnectedCallsTimeframe[]).map((tf) => (
+                                    <button
+                                        key={tf}
+                                        onClick={() => setConnectedCallsTimeframe(tf)}
+                                        className={`px-3 py-1 rounded-lg text-sm transition ${connectedCallsTimeframe === tf ? "bg-gradient-to-r from-cyan-400 to-indigo-400 text-black" : "bg-white/6 text-white/70"
+                                            }`}
+                                    >
+                                        {tf}
+                                    </button>
+                                ))}
                             </div>
                         </div>
-                    </>
-                )
-            )}
+
+                        <div style={{ height: 320 }}>
+                            {chartLoading ? (
+                                <div className="h-full flex items-center justify-center text-white/60">Loading chart...</div>
+                            ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={connectedCallsData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#0b1221" />
+                                        <XAxis dataKey="time" tick={{ fill: "#cbd5e1" }} />
+                                        <YAxis tick={{ fill: "#cbd5e1" }} />
+                                        <Tooltip />
+                                        <Bar
+                                            dataKey="connected_calls"
+                                            name="Connected Calls"
+                                            radius={[6, 6, 0, 0]}
+                                            fill="#60a5fa"
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            )}
+                        </div>
+                    </div>
+                </section>
+            </div>
         </div>
     );
 };
