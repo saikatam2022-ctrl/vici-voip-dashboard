@@ -40,8 +40,6 @@ const neonGlow = "shadow-[0_10px_30px_rgba(99,102,241,0.12)]";
 const Dashboard: React.FC = () => {
     // data + status
     const [data, setData] = useState<any>(null);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
     const [serverDate, setServerDate] = useState<string>("");
     const [balance, setBalance] = useState<number>(0);
 
